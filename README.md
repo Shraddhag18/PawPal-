@@ -6,9 +6,7 @@ PawPal+ helps busy pet owners stay consistent with daily pet care. Add your pets
 
 ## 📸 Demo
 
-<a href="/course_images/ai110/pawpal_screenshot.png" target="_blank">
-  <img src='/course_images/ai110/pawpal_screenshot.png' title='PawPal+ App' width='' alt='PawPal App' class='center-block' />
-</a>
+![PawPal App](Screenshot%202026-04-06%20120950.png)
 
 ## ✨ Features
 
