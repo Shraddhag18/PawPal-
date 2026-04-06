@@ -42,6 +42,36 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## Testing PawPal+
+
+### Run the tests
+
+```bash
+python -m pytest
+```
+
+### What the tests cover
+
+| Test class | Behaviours verified |
+|---|---|
+| `TestTask` | `mark_complete()` status change, idempotency, `priority_score()` ordering, `__str__` content |
+| `TestTaskRecurrence` | `next_occurrence()` advances `due_date` by 1 day, resets `completed`, preserves all other fields; raises `ValueError` for non-recurring tasks; `get_recurring_next_occurrences()` filters correctly |
+| `TestPet` | Add / remove tasks, task count, filter by priority and type, `total_care_minutes()` |
+| `TestOwner` | Add / get / remove pets, flatten all tasks across pets |
+| `TestScheduler` | Schedule generation, daily time budget enforcement, priority ordering, time-of-day ordering, conflict-free sequential output |
+| `TestSortByTime` | Chronological sort by explicit `scheduled_time`, bucket fallback order, mixed input, empty list |
+| `TestFilterTasks` | Filter by pet name, completion status, combined criteria, no-match returns `[]` |
+| `TestConflictDetection` | Exact-same-time conflict, overlapping windows, adjacent (non-overlapping) tasks, tasks without `scheduled_time` ignored, three-way conflicts, cross-pet conflicts |
+| `TestEdgeCases` | Empty pet, empty owner, pet with no tasks, single task at budget limit, 1-minute over budget, remove-only task |
+
+**Total: 59 tests — all passing**
+
+### Confidence level
+
+★★★★☆ (4 / 5)
+
+The scheduler's core behaviours — priority ordering, time-of-day bucketing, time budget enforcement, recurring roll-over, and conflict detection — are all verified with both happy-path and edge-case tests. The main gap is end-to-end UI integration tests (Streamlit interactions are not covered by pytest) and load tests with very large task lists.
+
 ## Smarter Scheduling
 
 PawPal+ goes beyond a simple task list with four algorithmic features built into `Scheduler`:
