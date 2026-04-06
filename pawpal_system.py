@@ -4,7 +4,8 @@ All core classes for managing pet care tasks and scheduling.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -52,6 +53,12 @@ class Task:
     recurring: bool = False
     notes: str = ""
     completed: bool = False
+    # Optional explicit start time in "HH:MM" format (e.g. "08:30").
+    # Used by sort_by_time() and detect_time_conflicts().
+    scheduled_time: Optional[str] = None
+    # Tracks which calendar date this task instance is due on.
+    # Auto-advances by 1 day when next_occurrence() is called.
+    due_date: Optional[date] = None
 
     def is_high_priority(self) -> bool:
         """Return True if this task has HIGH priority."""
@@ -64,6 +71,17 @@ class Task:
     def mark_complete(self) -> None:
         """Mark this task as completed."""
         self.completed = True
+
+    def next_occurrence(self) -> Task:
+        """
+        Return a new Task instance for the next day, resetting completion status.
+        Raises ValueError if called on a non-recurring task.
+        The new due_date is (self.due_date or today) + 1 day.
+        """
+        if not self.recurring:
+            raise ValueError(f"'{self.title}' is not a recurring task.")
+        next_date = (self.due_date or date.today()) + timedelta(days=1)
+        return replace(self, completed=False, due_date=next_date)
 
     def __str__(self) -> str:
         """Return a concise one-line summary of this task."""
@@ -354,6 +372,96 @@ class Scheduler:
 
         lines.append("\n" + "=" * 52)
         return "\n".join(lines)
+
+    def sort_by_time(self, pairs: list[tuple[Task, Pet]]) -> list[tuple[Task, Pet]]:
+        """
+        Sort (Task, Pet) pairs chronologically by explicit scheduled_time ("HH:MM").
+        Tasks without a scheduled_time fall back to their time_of_day bucket default
+        (morning=08:00, afternoon=12:00, evening=18:00, any=23:59).
+        Uses a lambda key so Python's sorted() compares plain strings lexicographically,
+        which works correctly for zero-padded "HH:MM" values.
+        """
+        _bucket_default = {
+            TimeOfDay.MORNING: "08:00",
+            TimeOfDay.AFTERNOON: "12:00",
+            TimeOfDay.EVENING: "18:00",
+            TimeOfDay.ANY: "23:59",
+        }
+        return sorted(
+            pairs,
+            key=lambda tp: tp[0].scheduled_time or _bucket_default[tp[0].time_of_day],
+        )
+
+    def filter_tasks(
+        self,
+        pet_name: Optional[str] = None,
+        completed: Optional[bool] = None,
+    ) -> list[tuple[Task, Pet]]:
+        """
+        Return (Task, Pet) pairs filtered by optional criteria.
+        - pet_name: if given, only include tasks belonging to that pet.
+        - completed: if True return only completed tasks; if False return only pending tasks;
+          if None (default) return tasks regardless of completion status.
+        """
+        results: list[tuple[Task, Pet]] = []
+        for pet in self.owner.pets:
+            if pet_name is not None and pet.name != pet_name:
+                continue
+            for task in pet.tasks:
+                if completed is not None and task.completed != completed:
+                    continue
+                results.append((task, pet))
+        return results
+
+    def detect_time_conflicts(self) -> list[str]:
+        """
+        Detect overlaps among tasks that have an explicit scheduled_time set.
+        Two tasks conflict when their time windows overlap:
+            task_a.start < task_b.end  AND  task_b.start < task_a.end
+        Returns a list of warning strings (empty list = no conflicts).
+        This is a lightweight O(n^2) check that warns rather than crashes.
+        """
+        def to_minutes(hhmm: str) -> int:
+            """Convert 'HH:MM' string to total minutes since midnight."""
+            h, m = hhmm.split(":")
+            return int(h) * 60 + int(m)
+
+        timed: list[tuple[Task, Pet]] = [
+            (task, pet)
+            for pet in self.owner.pets
+            for task in pet.tasks
+            if task.scheduled_time is not None
+        ]
+
+        conflicts: list[str] = []
+        for i in range(len(timed)):
+            for j in range(i + 1, len(timed)):
+                task_a, pet_a = timed[i]
+                task_b, pet_b = timed[j]
+                start_a = to_minutes(task_a.scheduled_time)
+                end_a = start_a + task_a.duration_minutes
+                start_b = to_minutes(task_b.scheduled_time)
+                end_b = start_b + task_b.duration_minutes
+                if start_a < end_b and start_b < end_a:
+                    conflicts.append(
+                        f"[!] CONFLICT: [{pet_a.name}] '{task_a.title}' "
+                        f"({task_a.scheduled_time}, {task_a.duration_minutes} min) overlaps "
+                        f"[{pet_b.name}] '{task_b.title}' "
+                        f"({task_b.scheduled_time}, {task_b.duration_minutes} min)"
+                    )
+        return conflicts
+
+    def get_recurring_next_occurrences(self) -> list[tuple[Task, Pet]]:
+        """
+        Return (next_Task, Pet) pairs for every recurring task that is already completed.
+        Call this after marking recurring tasks complete to get the next-day instances.
+        """
+        results: list[tuple[Task, Pet]] = []
+        for pet in self.owner.pets:
+            for task in pet.tasks:
+                if task.recurring and task.completed:
+                    results.append((task.next_occurrence(), pet))
+        return results
 
     def get_conflicts(self) -> list[str]:
         """Return conflict messages produced by the last generate_schedule() call."""

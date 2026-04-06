@@ -106,13 +106,26 @@ classDiagram
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers three constraints:
+
+1. **Daily time budget** (`available_minutes_per_day`) — the most hard constraint. Any task that would push total care time over the budget is skipped entirely rather than partially completed, because a half-done medication or walk is worse than skipping it.
+2. **Priority level** (HIGH / MEDIUM / LOW) — within each time-of-day bucket, tasks are sorted HIGH first using a numeric score (HIGH=3, MEDIUM=2, LOW=1). This ensures critical care like medication and feeding always gets placed before enrichment or grooming.
+3. **Time-of-day preference** (MORNING / AFTERNOON / EVENING / ANY) — tasks are grouped into four buckets processed in chronological order. The clock cursor jumps to each bucket's earliest allowed start (08:00, 12:00, 18:00), so morning tasks cannot spill into the afternoon window.
+
+Priority was chosen as the primary constraint because missing a high-priority task (e.g., medication) is riskier than missing a low-priority one (e.g., grooming). Time-of-day is a soft preference — it shapes the schedule's structure but does not override the budget.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+**Tradeoff: sequential slot assignment instead of optimal bin-packing.**
+
+The scheduler assigns tasks one-by-one in order (priority then time-of-day), placing each task immediately after the previous one. It does not search for the globally optimal arrangement that fits the most total minutes.
+
+*Example:* If a 60-minute HIGH appointment fills the afternoon window, a 5-minute HIGH medication that was planned for the same window might get pushed to EVENING — even though there was technically a 10-minute gap earlier that could have held it.
+
+This is reasonable for a pet-care app because:
+- A sequential greedy approach is predictable and easy to explain to the owner ("tasks are scheduled in priority order").
+- Computing the optimal schedule is an NP-hard knapsack problem; for the small number of daily tasks a pet owner has (typically < 15), greedy is fast and produces good-enough results.
+- Owners care more about *which* tasks run than about squeezing every last minute of efficiency out of the day.
 
 ---
 
