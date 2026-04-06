@@ -29,7 +29,7 @@ Relationships:
 - `Pet` *has many* `Task` objects.
 - `Scheduler` *uses* `Owner` (and transitively `Pet` and `Task`) to produce `ScheduledTask` outputs.
 
-**Mermaid.js UML Diagram:**
+**Initial Mermaid.js UML Diagram (Phase 1 draft):**
 
 ```mermaid
 classDiagram
@@ -97,8 +97,21 @@ classDiagram
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+Yes, the design evolved significantly during implementation.
+
+**Change 1 — `Task` gained two new fields and a new method.**
+During Phase 4 (Algorithmic Layer), two optional fields were added: `scheduled_time: Optional[str]` (an explicit "HH:MM" clock time) and `due_date: Optional[date]` (which calendar date a recurring task is due). A `mark_complete()` method (needed for tests in Phase 2) and `next_occurrence()` (which uses Python's `timedelta` to return a new Task instance dated one day later) were also added. These were not in the original UML because the recurring roll-over requirement only became concrete during algorithmic planning.
+
+**Change 2 — `Scheduler` grew four new algorithmic methods.**
+The original Scheduler only had `sort_by_priority`, `detect_conflicts`, `generate_schedule`, and `get_daily_plan`. After Phase 4, four more methods were added: `sort_by_time()` (chronological sort using a lambda key on "HH:MM" strings), `filter_tasks()` (filter by pet name and/or completion status), `detect_time_conflicts()` (pre-schedule overlap check on tasks with `scheduled_time` set), and `get_recurring_next_occurrences()` (batch collection of next-day instances for all completed recurring tasks). These additions reflect the shift from a basic scheduler to a smarter, multi-view system.
+
+**Final Mermaid.js UML Diagram (reflects actual built code):**
+
+See `uml_final.md` for the complete renderable diagram. The key differences from the initial draft:
+- `Task` now shows `completed`, `scheduled_time`, `due_date`, `mark_complete()`, and `next_occurrence()`
+- `Scheduler` now shows `sort_by_time()`, `filter_tasks()`, `detect_time_conflicts()`, and `get_recurring_next_occurrences()`
+- Enums (`Priority`, `TaskType`, `TimeOfDay`) are explicitly shown as separate enumeration classes
+- A self-referential `Task ..> Task : next_occurrence()` relationship is added
 
 ---
 
@@ -108,7 +121,7 @@ classDiagram
 
 The scheduler considers three constraints:
 
-1. **Daily time budget** (`available_minutes_per_day`) — the most hard constraint. Any task that would push total care time over the budget is skipped entirely rather than partially completed, because a half-done medication or walk is worse than skipping it.
+1. **Daily time budget** (`available_minutes_per_day`) — the hardest constraint. Any task that would push total care time over the budget is skipped entirely rather than partially completed, because a half-done medication or walk is worse than skipping it.
 2. **Priority level** (HIGH / MEDIUM / LOW) — within each time-of-day bucket, tasks are sorted HIGH first using a numeric score (HIGH=3, MEDIUM=2, LOW=1). This ensures critical care like medication and feeding always gets placed before enrichment or grooming.
 3. **Time-of-day preference** (MORNING / AFTERNOON / EVENING / ANY) — tasks are grouped into four buckets processed in chronological order. The clock cursor jumps to each bucket's earliest allowed start (08:00, 12:00, 18:00), so morning tasks cannot spill into the afternoon window.
 
@@ -133,13 +146,21 @@ This is reasonable for a pet-care app because:
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI assistance was used across all six phases of this project, but the nature of the help shifted at each stage:
+
+- **Phase 1 (Design):** AI was used to brainstorm the class structure and generate the initial Mermaid.js UML diagram. The most useful prompt type was "given these four entities, what attributes and methods does each need?" — it surfaced fields like `time_of_day` and `recurring` that I had not thought of up front.
+- **Phase 2 (Implementation):** AI scaffolded the method bodies from the skeleton stubs. Asking "based on this skeleton, how should Scheduler retrieve tasks from Owner's pets?" gave a concrete pattern (nested list comprehension) that matched the design exactly.
+- **Phase 3 (UI):** AI explained `st.session_state` and how to structure a form-submit-then-display pattern without creating duplicate objects on each rerun.
+- **Phase 4 (Algorithms):** The most useful prompts were specific: "how do I use `dataclasses.replace` to copy a dataclass with one field changed?" and "how does `timedelta` work for advancing a `date` by one day?" These targeted questions gave precise, correct answers faster than searching documentation.
+- **Phase 5 (Testing):** AI was used to generate test skeletons for edge cases (empty owner, task at exactly the budget limit, adjacent-but-not-overlapping time slots). The prompt "what edge cases should I test for a scheduler with conflict detection?" produced a useful checklist.
+
+The most productive prompt pattern overall was **providing the code file as context and asking a single, focused question** rather than asking AI to "build the whole thing."
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+One clear moment of rejection: when generating the `generate_schedule()` algorithm, AI initially suggested tracking time usage with a single global cursor that reset to 0 at the start of each time-of-day bucket. This would have caused a bug where an afternoon task could start at minute 0 (midnight) instead of minute 720 (noon), resulting in a schedule that looked correct textually but had wrong start times.
+
+The suggestion was evaluated by mentally tracing through an example — one morning task (30 min), one afternoon task (60 min) — and checking where the cursor would land. The bug became obvious. The fix was to advance the cursor to the *maximum* of its current position and the bucket's minimum start, which is what the final `if cursor < bucket_start: cursor = bucket_start` guard does. This was verified by running `main.py` and checking that afternoon tasks never showed a start time before 12:00.
 
 ---
 
@@ -147,13 +168,33 @@ This is reasonable for a pet-care app because:
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers 59 behaviors across 9 test classes:
+
+| Area | Key behaviors tested |
+|---|---|
+| Task lifecycle | `mark_complete()` changes status; `priority_score()` ordering; `__str__` content |
+| Recurrence | `next_occurrence()` advances date by exactly 1 day; resets `completed`; preserves all other fields; raises `ValueError` on non-recurring tasks |
+| Pet management | Add/remove tasks; filter by priority and type; `total_care_minutes()` sum |
+| Owner management | Add/get/remove pets; flatten all tasks across multiple pets |
+| Scheduler core | Time budget enforcement; priority ordering within schedule; time-of-day ordering (MORNING before AFTERNOON) |
+| Sort by time | Chronological order with explicit times; bucket fallback for tasks without a fixed time; empty list |
+| Filter tasks | By pet name; by completion status; combined criteria; no-match returns empty list |
+| Conflict detection | Exact-same-time conflict; overlapping windows; adjacent (non-overlapping) slots are not flagged; tasks without `scheduled_time` are ignored; three-way conflicts produce all three pair reports; cross-pet conflicts are caught |
+| Edge cases | Empty pet; empty owner; single task at exactly the budget limit; one minute over budget skipped; pet with no tasks returns 0 care minutes |
+
+These tests were important because they verified both the happy path (everything goes right) and the boundaries (exactly at limit, one over the limit, zero tasks). Boundary tests are where schedulers most commonly fail.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+★★★★☆ (4 / 5)
+
+The core scheduling pipeline — priority ordering, time-of-day bucketing, time budget enforcement, recurring roll-over, and conflict detection — is fully covered. Confidence is high for the backend logic.
+
+The one-star gap reflects two untested areas:
+1. **Streamlit UI interactions** — pytest does not exercise button clicks, form submissions, or session state transitions. A tool like Playwright or Streamlit's own testing utilities would be needed to verify end-to-end UI behavior.
+2. **Performance at scale** — the conflict detection algorithm is O(n²). With 15 tasks it is instant; with 200 tasks it may noticeably slow down. No load tests exist yet.
+
+Edge cases to add next: tasks with midnight-crossing durations (e.g., `scheduled_time="23:45"`, `duration=30`), two owners sharing a pet (not supported today but a realistic extension), and an owner whose available minutes are set to 0.
 
 ---
 
@@ -161,12 +202,16 @@ This is reasonable for a pet-care app because:
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The "CLI-first" workflow was the most valuable structural decision of the project. By building and verifying all logic in `pawpal_system.py` and testing it through `main.py` before touching `app.py`, every Streamlit wiring step was straightforward — there were no hidden logic bugs to debug inside the UI layer. The separation also meant the 59-test pytest suite could run in 0.14 seconds with no Streamlit dependency.
+
+The algorithmic layer (Phase 4) is the part I'm most satisfied with. `sort_by_time()` using a plain string lambda, `detect_time_conflicts()` with an overlap formula, and `next_occurrence()` using `dataclasses.replace` + `timedelta` are all concise and self-explanatory — they read like the problem description, which is the sign of a well-designed algorithm.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+If given another iteration, I would add a **persistence layer** — currently all data is lost when the browser tab closes. Saving the `Owner` object (and its pets and tasks) to a JSON file or a lightweight SQLite database would make the app genuinely usable day-to-day rather than just as a demo.
+
+I would also redesign the recurring task system. Currently `next_occurrence()` returns a new `Task` object but does not automatically add it back to the pet — the caller has to do that manually. A cleaner design would give `Pet` a `roll_over_recurring_tasks()` method that replaces completed recurring tasks with their next instances in one atomic operation.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important lesson is that **AI accelerates implementation but does not replace architectural judgment.** Every time AI generated a method body, I had to mentally trace through an example — "what happens when the task list is empty?", "what if two tasks share the same start time?" — to catch the cases AI optimized away for the happy path. The human role in AI-assisted engineering is not typing; it is deciding *what* to build, *why* the design is structured that way, and *verifying* that the generated code actually does what was intended. AI made me faster, but the design decisions — the class boundaries, the scheduling algorithm, the tradeoff of greedy vs. optimal — were all choices that required understanding the problem, not just the code.

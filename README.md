@@ -1,28 +1,58 @@
-# PawPal+ (Module 2 Project)
+# PawPal+ 🐾
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**A smart pet care scheduling assistant** built with Python OOP, algorithmic scheduling, and Streamlit.
 
-## Scenario
+PawPal+ helps busy pet owners stay consistent with daily pet care. Add your pets and their tasks, and PawPal+ builds a prioritized, conflict-free daily plan — and explains every decision.
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## 📸 Demo
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+<a href="/course_images/ai110/pawpal_screenshot.png" target="_blank">
+  <img src='/course_images/ai110/pawpal_screenshot.png' title='PawPal+ App' width='' alt='PawPal App' class='center-block' />
+</a>
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+## ✨ Features
 
-## What you will build
+### Owner & Pet Management
+- Register an owner with a daily available-time budget (in minutes)
+- Add multiple pets (name, species, age) to a single owner profile
+- All data persists across Streamlit reruns via `st.session_state`
 
-Your final app should:
+### Task Scheduling
+- Add care tasks to any pet with: title, duration, priority (HIGH / MEDIUM / LOW), task type (walk / feeding / medication / appointment / grooming / enrichment), and time-of-day preference (morning / afternoon / evening / any)
+- **Priority-first scheduling** — HIGH priority tasks are always placed before MEDIUM or LOW tasks within each time window, using a numeric score (HIGH=3, MEDIUM=2, LOW=1) as a sort key
+- **Time-of-day bucketing** — tasks are grouped into morning (08:00), afternoon (12:00), and evening (18:00) slots; the scheduler respects these windows before placing tasks
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+### Smarter Scheduling
 
-## Getting started
+See the [Smarter Scheduling](#smarter-scheduling) section below for full algorithm details.
+
+- **Chronological sort** (`sort_by_time`) — view all tasks in wall-clock order using a fast string lambda key
+- **Completion filter** (`filter_tasks`) — slice tasks by pet name and/or done/pending status
+- **Recurring task roll-over** (`next_occurrence`) — recurring tasks auto-advance their due date by one day using `timedelta` when marked complete
+- **Conflict detection** (`detect_time_conflicts`) — flags any two tasks whose time windows overlap before and after scheduling, with human-readable warnings instead of crashes
+
+### Professional UI
+- Four-tab layout: Pets · Tasks · Schedule · Smart View
+- Live conflict warnings in the Tasks tab as soon as overlapping times are entered
+- Schedule summary metrics (tasks scheduled, tasks skipped, minutes used/free)
+- Skipped-tasks expander with explanation
+- Recurring task tracker showing next due dates
+
+## 🗂 Project Structure
+
+```
+pawpal-plus/
+├── pawpal_system.py   # Backend logic: Owner, Pet, Task, Scheduler, ScheduledTask
+├── app.py             # Streamlit UI — imports from pawpal_system
+├── main.py            # CLI demo script (run to verify backend without UI)
+├── tests/
+│   └── test_pawpal.py # 59 automated pytest tests
+├── uml_final.md       # Final Mermaid.js UML diagram (render at mermaid.live)
+├── reflection.md      # Design decisions, tradeoffs, and AI collaboration notes
+└── requirements.txt
+```
+
+## 🚀 Getting started
 
 ### Setup
 
@@ -30,6 +60,18 @@ Your final app should:
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+### Run the app
+
+```bash
+streamlit run app.py
+```
+
+### Run the CLI demo
+
+```bash
+python main.py
 ```
 
 ### Suggested workflow
