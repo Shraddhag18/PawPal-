@@ -1,10 +1,28 @@
 import streamlit as st
 from datetime import date
+from pathlib import Path
 
 from pawpal_system import (
     Owner, Pet, Task, Scheduler,
     Priority, TaskType, TimeOfDay,
 )
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DATA_FILE = Path("data.json")
+
+# Challenge 4 — task type emojis for professional UI output
+TASK_EMOJI = {
+    "walk":        "🦮",
+    "feeding":     "🍽️",
+    "medication":  "💊",
+    "appointment": "🏥",
+    "grooming":    "✂️",
+    "enrichment":  "🎾",
+    "other":       "📝",
+}
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="wide")
 
@@ -15,7 +33,14 @@ st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="wide")
 # ---------------------------------------------------------------------------
 
 if "owner" not in st.session_state:
-    st.session_state.owner: Owner | None = None
+    # Challenge 2 — auto-load from data.json if it exists
+    if DATA_FILE.exists():
+        try:
+            st.session_state.owner = Owner.load_from_json(DATA_FILE)
+        except Exception:
+            st.session_state.owner = None
+    else:
+        st.session_state.owner = None
 
 # ---------------------------------------------------------------------------
 # Sidebar — Owner setup
@@ -37,6 +62,7 @@ with st.sidebar:
                 name=owner_name,
                 available_minutes_per_day=int(available_mins),
             )
+            st.session_state.owner.save_to_json(DATA_FILE)   # Challenge 2
             st.success(f"Saved: {owner_name}")
 
     if st.session_state.owner:
@@ -84,6 +110,7 @@ with tab_pets:
                 st.warning(f"A pet named '{pet_name}' already exists.")
             else:
                 owner.add_pet(Pet(name=pet_name, species=species, age=int(age)))
+                owner.save_to_json(DATA_FILE)   # Challenge 2
                 st.success(f"Added {pet_name} the {species}!")
 
     if owner.pets:
@@ -146,6 +173,7 @@ with tab_tasks:
                     scheduled_time=scheduled_time.strip() or None,
                     due_date=date.today() if recurring else None,
                 ))
+                owner.save_to_json(DATA_FILE)   # Challenge 2
                 st.success(f"Added '{task_title}' to {target_pet}.")
 
         # Show tasks per pet
@@ -162,11 +190,12 @@ with tab_tasks:
                         "medium": ":orange[MED]",
                         "low":    ":green[LOW]",
                     }.get(task.priority.value, task.priority.value)
-                    status_icon = "✅" if task.completed else "🔲"
-                    time_hint = f" · `{task.scheduled_time}`" if task.scheduled_time else ""
-                    recur_hint = " 🔁" if task.recurring else ""
+                    status_icon  = "✅" if task.completed else "🔲"
+                    time_hint    = f" · `{task.scheduled_time}`" if task.scheduled_time else ""
+                    recur_hint   = " 🔁" if task.recurring else ""
+                    emoji        = TASK_EMOJI.get(task.task_type.value, "📝")  # Challenge 4
                     st.markdown(
-                        f"{status_icon} {priority_badge} &nbsp; **{task.title}**"
+                        f"{status_icon} {priority_badge} {emoji} &nbsp; **{task.title}**"
                         f" ({task.duration_minutes} min | {task.task_type.value}"
                         f"{time_hint}){recur_hint}"
                     )
@@ -228,7 +257,8 @@ with tab_schedule:
                         c2.markdown(f"**{item.task.title}** — {item.pet.name}")
                         c2.caption(item.reason)
                         c3.markdown(priority_color.get(item.task.priority.value, ""))
-                        c3.caption(f"{item.task.duration_minutes} min · {item.task.task_type.value}")
+                        emoji = TASK_EMOJI.get(item.task.task_type.value, "")
+                        c3.caption(f"{emoji} {item.task.duration_minutes} min · {item.task.task_type.value}")
                         if item.task.recurring:
                             c4.markdown("🔁")
             else:
@@ -349,6 +379,45 @@ with tab_smart:
                 )
             else:
                 st.info("No recurring tasks added yet. Check 'Recurring daily task' when adding a task.")
+
+        st.divider()
+
+        # --- Weighted priority ranking (Challenge 1) -----------------------
+        st.markdown("#### Weighted priority ranking")
+        st.caption(
+            "Ranks tasks by a composite score: base priority + task-type urgency "
+            "+ overdue penalty + recurring bonus. Gives a smarter ordering than "
+            "HIGH/MEDIUM/LOW alone."
+        )
+        weighted_sorted = scheduler.sort_by_weighted_priority(all_pairs)
+        weighted_rows = [
+            {
+                "Rank":     i + 1,
+                "Score":    tp[0].weighted_score(),
+                "Pet":      tp[1].name,
+                "Task":     tp[0].title,
+                "Priority": tp[0].priority.value,
+                "Type":     TASK_EMOJI.get(tp[0].task_type.value, "") + " " + tp[0].task_type.value,
+                "Overdue":  "Yes" if (tp[0].due_date and tp[0].due_date < date.today()) else "No",
+            }
+            for i, tp in enumerate(weighted_sorted)
+        ]
+        st.table(weighted_rows)
+
+        # --- Next available slot (Challenge 1) -----------------------------
+        st.markdown("#### Next available scheduling slot")
+        slot_duration = st.number_input(
+            "Task duration to fit (minutes)", min_value=1, max_value=120, value=15, key="slot_dur"
+        )
+        if st.button("Find next free slot"):
+            temp_scheduler = Scheduler(owner)
+            temp_scheduler.generate_schedule()
+            slot = temp_scheduler.find_next_slot(int(slot_duration))
+            if slot is not None:
+                h, m = divmod(slot, 60)
+                st.success(f"Next free {slot_duration}-min slot starts at **{h:02d}:{m:02d}**.")
+            else:
+                st.warning("No free slot found within today's schedule.")
 
         st.divider()
 

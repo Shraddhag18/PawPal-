@@ -84,6 +84,50 @@ python main.py
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## Optional Extensions
+
+### Challenge 1 — Advanced Algorithmic Capability
+
+**Weighted Priority Scoring (`Task.weighted_score()`):**
+Goes beyond flat HIGH/MEDIUM/LOW ordering by computing a composite urgency float:
+
+```
+score = base_priority + task_type_bonus + overdue_penalty + recurring_bonus
+```
+
+| Factor | Values |
+|---|---|
+| Base priority | HIGH=100, MEDIUM=50, LOW=10 |
+| Task-type bonus | medication=30, appointment=25, feeding=20, walk=10, grooming=5, enrichment=3 |
+| Overdue penalty | +15 per overdue day, capped at 50 |
+| Recurring bonus | +5 if the task recurs daily |
+
+`Scheduler.sort_by_weighted_priority()` uses these scores to produce a smarter ordering — for example, an overdue MEDIUM medication outranks a current HIGH enrichment activity.
+
+**Next Available Slot (`Scheduler.find_next_slot(duration, after_minute)`):**
+Scans the generated schedule for the earliest free gap that fits a task of given duration. Useful for answering "when can I squeeze in a 15-minute grooming session?"
+
+### Challenge 2 — Data Persistence
+
+All pets and tasks survive browser/terminal restarts via JSON serialization:
+
+- `Task.to_dict()` / `Task.from_dict()` — serialize individual tasks
+- `Pet.to_dict()` / `Pet.from_dict()` — serialize pets with their tasks
+- `Owner.to_dict()` / `Owner.from_dict()` — serialize the full owner graph
+- `Owner.save_to_json(path)` — write to `data.json`
+- `Owner.load_from_json(path)` — reload on startup
+
+The Streamlit app auto-saves after every owner/pet/task change and auto-loads from `data.json` on first run.
+
+### Challenge 4 — Professional Formatting
+
+- **Streamlit UI:** Task type emoji badges (🦮 walk · 🍽️ feeding · 💊 medication · 🏥 appointment · ✂️ grooming · 🎾 enrichment · 📝 other) displayed on task cards and in the Smart View
+- **CLI (`main.py`):** All output tables rendered with [`tabulate`](https://pypi.org/project/tabulate/) using aligned columns for owner/pet summaries, chronological task lists, weighted priority rankings, and the daily schedule
+
+### Challenge 5 — Multi-Model Prompt Comparison
+
+See the **Prompt Comparison** section in [`reflection.md`](reflection.md) for a side-by-side analysis of Claude (Sonnet) vs. ChatGPT (GPT-4o) solutions for the `weighted_score()` algorithm, including a decision rationale explaining which approach was adopted and why.
+
 ## Testing PawPal+
 
 ### Run the tests

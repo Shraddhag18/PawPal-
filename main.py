@@ -1,25 +1,45 @@
 """
-PawPal+ CLI Demo
+PawPal+ CLI Demo  (Challenge 4: tabulate + emoji formatting)
 Verifies all backend logic: scheduling, sorting, filtering,
-recurring tasks, and conflict detection.
+recurring tasks, conflict detection, weighted priority, next-slot finder,
+and JSON persistence.
     python main.py
 """
 
 from datetime import date
+from tabulate import tabulate
+
 from pawpal_system import (
     Owner, Pet, Task, Scheduler,
     Priority, TaskType, TimeOfDay,
 )
 
+# Challenge 4 — task type labels for CLI (emojis shown in Streamlit UI)
+TASK_LABEL = {
+    TaskType.WALK:        "[walk]",
+    TaskType.FEEDING:     "[feed]",
+    TaskType.MEDICATION:  "[med] ",
+    TaskType.APPOINTMENT: "[appt]",
+    TaskType.GROOMING:    "[groom]",
+    TaskType.ENRICHMENT:  "[enrich]",
+    TaskType.OTHER:       "[other]",
+}
+
+PRIORITY_ICON = {
+    Priority.HIGH:   "[HIGH]",
+    Priority.MEDIUM: "[MED] ",
+    Priority.LOW:    "[LOW] ",
+}
+
 
 def sep(title: str) -> None:
-    print(f"\n{'-' * 54}")
+    print(f"\n{'-' * 60}")
     print(f"  {title}")
-    print(f"{'-' * 54}")
+    print(f"{'-' * 60}")
 
 
 # ---------------------------------------------------------------------------
-# Build demo data  (tasks added intentionally out of chronological order)
+# Build demo data
 # ---------------------------------------------------------------------------
 
 owner = Owner(name="Jordan", available_minutes_per_day=150)
@@ -27,141 +47,151 @@ owner = Owner(name="Jordan", available_minutes_per_day=150)
 mochi = Pet(name="Mochi", species="dog", age=3)
 luna  = Pet(name="Luna",  species="cat", age=5)
 
-# Mochi's tasks – added out of time order to prove sort_by_time works
 mochi.add_task(Task(
-    title="Evening Walk",
-    duration_minutes=25,
-    priority=Priority.MEDIUM,
-    task_type=TaskType.WALK,
-    time_of_day=TimeOfDay.EVENING,
-    scheduled_time="18:00",
-    recurring=True,
-    due_date=date.today(),
+    title="Evening Walk", duration_minutes=25, priority=Priority.MEDIUM,
+    task_type=TaskType.WALK, time_of_day=TimeOfDay.EVENING,
+    scheduled_time="18:00", recurring=True, due_date=date.today(),
 ))
 mochi.add_task(Task(
-    title="Breakfast",
-    duration_minutes=10,
-    priority=Priority.HIGH,
-    task_type=TaskType.FEEDING,
-    time_of_day=TimeOfDay.MORNING,
-    scheduled_time="08:00",
-    recurring=True,
-    due_date=date.today(),
+    title="Breakfast", duration_minutes=10, priority=Priority.HIGH,
+    task_type=TaskType.FEEDING, time_of_day=TimeOfDay.MORNING,
+    scheduled_time="08:00", recurring=True, due_date=date.today(),
 ))
 mochi.add_task(Task(
-    title="Afternoon Play",
-    duration_minutes=20,
-    priority=Priority.LOW,
-    task_type=TaskType.ENRICHMENT,
-    time_of_day=TimeOfDay.AFTERNOON,
+    title="Afternoon Play", duration_minutes=20, priority=Priority.LOW,
+    task_type=TaskType.ENRICHMENT, time_of_day=TimeOfDay.AFTERNOON,
     scheduled_time="13:00",
 ))
 mochi.add_task(Task(
-    title="Heartworm Pill",
-    duration_minutes=5,
-    priority=Priority.HIGH,
-    task_type=TaskType.MEDICATION,
-    time_of_day=TimeOfDay.EVENING,
-    scheduled_time="18:00",   # <-- same slot as Evening Walk -> CONFLICT
-    notes="Give with food",
-    recurring=True,
-    due_date=date.today(),
+    title="Heartworm Pill", duration_minutes=5, priority=Priority.HIGH,
+    task_type=TaskType.MEDICATION, time_of_day=TimeOfDay.EVENING,
+    scheduled_time="18:00", notes="Give with food",
+    recurring=True, due_date=date.today(),
 ))
 
-# Luna's tasks
 luna.add_task(Task(
-    title="Breakfast",
-    duration_minutes=5,
-    priority=Priority.HIGH,
-    task_type=TaskType.FEEDING,
-    time_of_day=TimeOfDay.MORNING,
-    scheduled_time="08:15",
-    recurring=True,
-    due_date=date.today(),
+    title="Breakfast", duration_minutes=5, priority=Priority.HIGH,
+    task_type=TaskType.FEEDING, time_of_day=TimeOfDay.MORNING,
+    scheduled_time="08:15", recurring=True, due_date=date.today(),
 ))
 luna.add_task(Task(
-    title="Vet Appointment",
-    duration_minutes=60,
-    priority=Priority.HIGH,
-    task_type=TaskType.APPOINTMENT,
-    time_of_day=TimeOfDay.AFTERNOON,
+    title="Vet Appointment", duration_minutes=60, priority=Priority.HIGH,
+    task_type=TaskType.APPOINTMENT, time_of_day=TimeOfDay.AFTERNOON,
     scheduled_time="14:00",
 ))
 luna.add_task(Task(
-    title="Evening Brushing",
-    duration_minutes=10,
-    priority=Priority.LOW,
-    task_type=TaskType.GROOMING,
-    time_of_day=TimeOfDay.EVENING,
+    title="Evening Brushing", duration_minutes=10, priority=Priority.LOW,
+    task_type=TaskType.GROOMING, time_of_day=TimeOfDay.EVENING,
     scheduled_time="19:00",
 ))
 
 owner.add_pet(mochi)
 owner.add_pet(luna)
-
 scheduler = Scheduler(owner)
 
 # ---------------------------------------------------------------------------
-# 1. Sort by time (chronological order, not insertion order)
+# 1. Owner & pet summary (tabulate)
 # ---------------------------------------------------------------------------
 
-sep("1. SORT BY TIME  (chronological across all pets)")
+sep("1. OWNER & PET SUMMARY")
+pet_rows = [
+    [p.name, p.species, p.age, len(p.tasks), f"{p.total_care_minutes()} min"]
+    for p in owner.pets
+]
+print(tabulate(
+    pet_rows,
+    headers=["Pet", "Species", "Age", "Tasks", "Total care"],
+    tablefmt="simple",
+))
 
-all_pairs = [(task, pet) for pet in owner.pets for task in pet.tasks]
+# ---------------------------------------------------------------------------
+# 2. All tasks — sorted by time (tabulate + emoji)
+# ---------------------------------------------------------------------------
+
+sep("2. ALL TASKS  sorted chronologically")
+all_pairs = [(t, p) for p in owner.pets for t in p.tasks]
 sorted_pairs = scheduler.sort_by_time(all_pairs)
 
-for task, pet in sorted_pairs:
-    time_label = task.scheduled_time or f"[{task.time_of_day.value}]"
-    print(f"  {time_label}  [{pet.name}]  {task.title}  ({task.priority.value})")
+task_rows = [
+    [
+        tp[0].scheduled_time or f"[{tp[0].time_of_day.value}]",
+        tp[1].name,
+        TASK_LABEL.get(tp[0].task_type, "") + " " + tp[0].title,
+        f"{tp[0].duration_minutes} min",
+        PRIORITY_ICON[tp[0].priority],
+        "Yes" if tp[0].recurring else "No",
+    ]
+    for tp in sorted_pairs
+]
+print(tabulate(
+    task_rows,
+    headers=["Time", "Pet", "Task", "Duration", "Priority", "Recurring"],
+    tablefmt="simple",
+))
 
 # ---------------------------------------------------------------------------
-# 2. Filter by pet and by completion status
+# 3. Weighted priority ranking (Challenge 1)
 # ---------------------------------------------------------------------------
 
-sep("2. FILTER TASKS")
-
-print("  >> All Mochi tasks:")
-for task, pet in scheduler.filter_tasks(pet_name="Mochi"):
-    print(f"     {task}")
-
-# Mark one task complete to make the status filter interesting
-mochi_breakfast = next(t for t in mochi.tasks if t.title == "Breakfast")
-mochi_breakfast.mark_complete()
-
-print("\n  >> Completed tasks (all pets):")
-for task, pet in scheduler.filter_tasks(completed=True):
-    print(f"     [{pet.name}] {task}")
-
-print("\n  >> Pending tasks (all pets):")
-for task, pet in scheduler.filter_tasks(completed=False):
-    print(f"     [{pet.name}] {task}")
-
-# ---------------------------------------------------------------------------
-# 3. Recurring task – generate next occurrence
-# ---------------------------------------------------------------------------
-
-sep("3. RECURRING TASKS  (next-day occurrence after completion)")
-
-# Mark all recurring tasks complete to demo the feature
-for pet in owner.pets:
-    for task in pet.tasks:
-        if task.recurring:
-            task.mark_complete()
-
-next_occurrences = scheduler.get_recurring_next_occurrences()
-print(f"  Recurring tasks completed today: {len(next_occurrences)}")
-for next_task, pet in next_occurrences:
-    print(
-        f"  [{pet.name}] '{next_task.title}' "
-        f"rescheduled for {next_task.due_date}  (completed={next_task.completed})"
-    )
+sep("3. WEIGHTED PRIORITY RANKING  (score = priority + type + overdue + recurring)")
+weighted = scheduler.sort_by_weighted_priority(all_pairs)
+w_rows = [
+    [
+        i + 1,
+        round(tp[0].weighted_score(), 1),
+        tp[1].name,
+        TASK_LABEL.get(tp[0].task_type, "") + " " + tp[0].title,
+        tp[0].priority.value,
+        tp[0].task_type.value,
+    ]
+    for i, tp in enumerate(weighted)
+]
+print(tabulate(
+    w_rows,
+    headers=["Rank", "Score", "Pet", "Task", "Priority", "Type"],
+    tablefmt="simple",
+))
 
 # ---------------------------------------------------------------------------
-# 4. Conflict detection (Heartworm Pill and Evening Walk share 18:00)
+# 4. Generate schedule + next available slot
 # ---------------------------------------------------------------------------
 
-sep("4. CONFLICT DETECTION  (explicit scheduled_time overlaps)")
+sep("4. DAILY SCHEDULE")
+scheduler.generate_schedule()
+schedule_rows = [
+    [
+        st.time_label(),
+        st.pet.name,
+        TASK_LABEL.get(st.task.task_type, "") + " " + st.task.title,
+        f"{st.task.duration_minutes} min",
+        st.task.priority.value,
+    ]
+    for st in sorted(scheduler._schedule, key=lambda x: x.start_minute)
+]
+print(tabulate(
+    schedule_rows,
+    headers=["Time", "Pet", "Task", "Duration", "Priority"],
+    tablefmt="simple",
+))
 
+if scheduler._skipped:
+    print(f"\n  Skipped ({len(scheduler._skipped)}):")
+    for task, pet in scheduler._skipped:
+        print(f"    [skip] [{pet.name}] {task.title} ({task.duration_minutes} min)")
+
+sep("4b. NEXT AVAILABLE SLOT  (Challenge 1)")
+slot = scheduler.find_next_slot(30)
+if slot is not None:
+    h, m = divmod(slot, 60)
+    print(f"  Next free 30-min slot starts at {h:02d}:{m:02d}")
+else:
+    print("  No free 30-min slot found today.")
+
+# ---------------------------------------------------------------------------
+# 5. Conflict detection
+# ---------------------------------------------------------------------------
+
+sep("5. CONFLICT DETECTION")
 conflicts = scheduler.detect_time_conflicts()
 if conflicts:
     print(f"  Found {len(conflicts)} conflict(s):")
@@ -171,15 +201,20 @@ else:
     print("  No conflicts detected.")
 
 # ---------------------------------------------------------------------------
-# 5. Full daily schedule
+# 6. JSON persistence (Challenge 2)
 # ---------------------------------------------------------------------------
 
-sep("5. DAILY SCHEDULE")
+sep("6. JSON PERSISTENCE  (Challenge 2)")
+owner.save_to_json("data.json")
+print("  Saved to data.json")
 
-# Reset completions so all tasks appear in the schedule
-for pet in owner.pets:
-    for task in pet.tasks:
-        task.completed = False
+reloaded = Owner.load_from_json("data.json")
+print(f"  Reloaded: {reloaded}")
+print(f"  Pets:     {[p.name for p in reloaded.pets]}")
+print(f"  Tasks:    {sum(len(p.tasks) for p in reloaded.pets)} total across all pets")
 
-scheduler.generate_schedule()
-print(scheduler.get_daily_plan())
+# Verify round-trip fidelity
+original_tasks = [(t.title, p.name) for p in owner.pets for t in p.tasks]
+reloaded_tasks = [(t.title, p.name) for p in reloaded.pets for t in p.tasks]
+assert original_tasks == reloaded_tasks, "Round-trip fidelity check FAILED"
+print("  Round-trip fidelity check: PASSED")

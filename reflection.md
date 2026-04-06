@@ -215,3 +215,71 @@ I would also redesign the recurring task system. Currently `next_occurrence()` r
 **c. Key takeaway**
 
 The most important lesson is that **AI accelerates implementation but does not replace architectural judgment.** Every time AI generated a method body, I had to mentally trace through an example — "what happens when the task list is empty?", "what if two tasks share the same start time?" — to catch the cases AI optimized away for the happy path. The human role in AI-assisted engineering is not typing; it is deciding *what* to build, *why* the design is structured that way, and *verifying* that the generated code actually does what was intended. AI made me faster, but the design decisions — the class boundaries, the scheduling algorithm, the tradeoff of greedy vs. optimal — were all choices that required understanding the problem, not just the code.
+
+---
+
+## 6. Prompt Comparison (Challenge 5 — Multi-Model)
+
+**Task compared:** Implementing the `weighted_score()` method on `Task` — a multi-factor urgency score combining base priority, task-type importance, overdue penalty, and a recurring bonus.
+
+**Prompt used for both models:**
+> "I have a Python Task dataclass with fields: priority (HIGH/MEDIUM/LOW enum), task_type (WALK/FEEDING/MEDICATION/APPOINTMENT/GROOMING/ENRICHMENT/OTHER enum), due_date (Optional[date]), and recurring (bool). Write a weighted_score() method that returns a float combining all four factors into a single urgency score. Higher score = more urgent."
+
+---
+
+**Claude (Sonnet)** produced:
+
+```python
+def weighted_score(self) -> float:
+    base = {Priority.HIGH: 100, Priority.MEDIUM: 50, Priority.LOW: 10}[self.priority]
+    type_bonus = {
+        TaskType.MEDICATION: 30, TaskType.APPOINTMENT: 25,
+        TaskType.FEEDING: 20, TaskType.WALK: 10,
+        TaskType.GROOMING: 5, TaskType.ENRICHMENT: 3, TaskType.OTHER: 0,
+    }[self.task_type]
+    overdue_bonus = 0
+    if self.due_date and self.due_date < date.today():
+        overdue_bonus = min((date.today() - self.due_date).days * 15, 50)
+    return float(base + type_bonus + (5 if self.recurring else 0) + overdue_bonus)
+```
+
+**Characteristics:** Compact, dictionary-lookup driven, all four factors in one expression. The `min(..., 50)` cap is present to prevent unbounded scores from very overdue tasks. The return is a single readable `float(...)` expression.
+
+---
+
+**ChatGPT (GPT-4o)** produced:
+
+```python
+def weighted_score(self) -> float:
+    priority_weights = {"high": 3, "medium": 2, "low": 1}
+    type_weights = {"medication": 1.5, "appointment": 1.4, "feeding": 1.3,
+                    "walk": 1.1, "grooming": 1.05, "enrichment": 1.02, "other": 1.0}
+    base_score = priority_weights.get(self.priority.value, 1) * 10
+    type_multiplier = type_weights.get(self.task_type.value, 1.0)
+    score = base_score * type_multiplier
+    if self.recurring:
+        score *= 1.1
+    if self.due_date and self.due_date < date.today():
+        days_late = (date.today() - self.due_date).days
+        score += days_late * 5
+    return round(score, 2)
+```
+
+**Characteristics:** Uses a multiplicative model (base × type multiplier × recurring multiplier) with an additive overdue component. The multiplicative approach means task type scales with priority (a HIGH medication scores much more than a LOW medication), which is mathematically richer. However, overdue penalty is unbounded — a task 100 days late gains 500 points, potentially drowning out all other factors.
+
+---
+
+**Analysis and decision:**
+
+| Criterion | Claude (additive) | GPT-4o (multiplicative) |
+|---|---|---|
+| Readability | Clear, each factor independent | Harder to reason about combined effect |
+| Predictability | Score range easy to understand | Multiplicative scaling is less intuitive |
+| Overdue handling | Capped at +50 (safe) | Unbounded — can dominate all other factors |
+| Type-priority interaction | Independent additive bonuses | Type scales with priority (more realistic) |
+| Pythonic style | Dict lookup, single expression | Multiple conditional mutations |
+
+**Verdict: Claude's additive model was adopted** for two reasons. First, the bounded overdue penalty (+50 cap) prevents a pathological edge case where a task forgotten for a month scores higher than a same-day medication — which is the wrong behavior for a pet care app where the owner resets tasks daily. Second, the additive model makes it trivial to explain to a user: "your score is 135 = 100 (HIGH) + 30 (medication) + 5 (recurring)." The multiplicative model is more mathematically elegant but harder to explain and debug.
+
+The one element kept from the GPT-4o suggestion: naming the intermediate variables (`base`, `type_bonus`, `overdue_bonus`, `recurring_bonus`) rather than computing everything in one line — this makes the formula self-documenting.
+

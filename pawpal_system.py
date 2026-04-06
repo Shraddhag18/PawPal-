@@ -4,9 +4,11 @@ All core classes for managing pet care tasks and scheduling.
 """
 
 from __future__ import annotations
+import json
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
@@ -83,6 +85,79 @@ class Task:
         next_date = (self.due_date or date.today()) + timedelta(days=1)
         return replace(self, completed=False, due_date=next_date)
 
+    # ------------------------------------------------------------------
+    # Challenge 1 — Weighted priority score
+    # ------------------------------------------------------------------
+
+    def weighted_score(self) -> float:
+        """
+        Compute a multi-factor urgency score for smarter scheduling.
+
+        Formula:
+          base_priority  (HIGH=100, MEDIUM=50, LOW=10)
+        + task_type_bonus (medication=30, appointment=25, feeding=20,
+                           walk=10, grooming=5, enrichment=3, other=0)
+        + overdue_bonus  (15 pts per overdue day, capped at 50)
+        + recurring_bonus (5 pts if the task recurs daily)
+
+        Higher scores are scheduled first by sort_by_weighted_priority().
+        """
+        base = {Priority.HIGH: 100, Priority.MEDIUM: 50, Priority.LOW: 10}[self.priority]
+
+        type_bonus = {
+            TaskType.MEDICATION:   30,
+            TaskType.APPOINTMENT:  25,
+            TaskType.FEEDING:      20,
+            TaskType.WALK:         10,
+            TaskType.GROOMING:      5,
+            TaskType.ENRICHMENT:    3,
+            TaskType.OTHER:         0,
+        }[self.task_type]
+
+        overdue_bonus = 0
+        if self.due_date and self.due_date < date.today():
+            days_overdue = (date.today() - self.due_date).days
+            overdue_bonus = min(days_overdue * 15, 50)
+
+        recurring_bonus = 5 if self.recurring else 0
+
+        return float(base + type_bonus + overdue_bonus + recurring_bonus)
+
+    # ------------------------------------------------------------------
+    # Challenge 2 — JSON serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialise this Task to a JSON-safe dictionary."""
+        return {
+            "title":            self.title,
+            "duration_minutes": self.duration_minutes,
+            "priority":         self.priority.value,
+            "task_type":        self.task_type.value,
+            "time_of_day":      self.time_of_day.value,
+            "recurring":        self.recurring,
+            "notes":            self.notes,
+            "completed":        self.completed,
+            "scheduled_time":   self.scheduled_time,
+            "due_date":         self.due_date.isoformat() if self.due_date else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Task:
+        """Reconstruct a Task from a dictionary produced by to_dict()."""
+        return cls(
+            title=data["title"],
+            duration_minutes=data["duration_minutes"],
+            priority=Priority(data["priority"]),
+            task_type=TaskType(data["task_type"]),
+            time_of_day=TimeOfDay(data["time_of_day"]),
+            recurring=data.get("recurring", False),
+            notes=data.get("notes", ""),
+            completed=data.get("completed", False),
+            scheduled_time=data.get("scheduled_time"),
+            due_date=date.fromisoformat(data["due_date"]) if data.get("due_date") else None,
+        )
+
     def __str__(self) -> str:
         """Return a concise one-line summary of this task."""
         status = "done" if self.completed else "todo"
@@ -128,6 +203,22 @@ class Pet:
     def total_care_minutes(self) -> int:
         """Return the total duration in minutes required for all tasks."""
         return sum(t.duration_minutes for t in self.tasks)
+
+    def to_dict(self) -> dict:
+        """Serialise this Pet (and all its Tasks) to a JSON-safe dictionary."""
+        return {
+            "name":    self.name,
+            "species": self.species,
+            "age":     self.age,
+            "tasks":   [t.to_dict() for t in self.tasks],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Pet:
+        """Reconstruct a Pet (and its Tasks) from a dictionary produced by to_dict()."""
+        pet = cls(name=data["name"], species=data["species"], age=data["age"])
+        pet.tasks = [Task.from_dict(t) for t in data.get("tasks", [])]
+        return pet
 
     def __str__(self) -> str:
         """Return a one-line summary of this pet."""
@@ -176,6 +267,46 @@ class Owner:
         for pet in self.pets:
             all_tasks.extend(pet.tasks)
         return all_tasks
+
+    def to_dict(self) -> dict:
+        """Serialise this Owner (and all pets/tasks) to a JSON-safe dictionary."""
+        return {
+            "name":                      self.name,
+            "available_minutes_per_day": self.available_minutes_per_day,
+            "preferred_morning_tasks":   [t.value for t in self.preferred_morning_tasks],
+            "preferred_evening_tasks":   [t.value for t in self.preferred_evening_tasks],
+            "pets":                      [p.to_dict() for p in self.pets],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Owner:
+        """Reconstruct an Owner (and all pets/tasks) from a dictionary produced by to_dict()."""
+        owner = cls(
+            name=data["name"],
+            available_minutes_per_day=data["available_minutes_per_day"],
+            preferred_morning_tasks=[TaskType(t) for t in data.get("preferred_morning_tasks", [])],
+            preferred_evening_tasks=[TaskType(t) for t in data.get("preferred_evening_tasks", [])],
+        )
+        owner.pets = [Pet.from_dict(p) for p in data.get("pets", [])]
+        return owner
+
+    def save_to_json(self, path: str | Path = "data.json") -> None:
+        """
+        Persist the entire owner graph (pets + tasks) to a JSON file.
+        Creates or overwrites the file at the given path.
+        """
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.to_dict(), fh, indent=2)
+
+    @classmethod
+    def load_from_json(cls, path: str | Path = "data.json") -> Owner:
+        """
+        Load an Owner (and all pets/tasks) from a JSON file written by save_to_json().
+        Raises FileNotFoundError if the file does not exist.
+        """
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return cls.from_dict(data)
 
     def __str__(self) -> str:
         """Return a one-line summary of this owner."""
@@ -462,6 +593,57 @@ class Scheduler:
                 if task.recurring and task.completed:
                     results.append((task.next_occurrence(), pet))
         return results
+
+    # ------------------------------------------------------------------
+    # Challenge 1 — Advanced algorithmic capabilities
+    # ------------------------------------------------------------------
+
+    def sort_by_weighted_priority(
+        self, pairs: list[tuple[Task, Pet]]
+    ) -> list[tuple[Task, Pet]]:
+        """
+        Sort (Task, Pet) pairs by each task's weighted_score() — highest first.
+
+        weighted_score() combines base priority, task-type urgency, overdue penalty,
+        and a recurring-task bonus into a single float, producing a richer ordering
+        than a flat HIGH/MEDIUM/LOW sort.  For example, an overdue MEDIUM medication
+        outranks a non-overdue HIGH enrichment activity.
+        """
+        return sorted(pairs, key=lambda tp: tp[0].weighted_score(), reverse=True)
+
+    def find_next_slot(
+        self, duration_minutes: int, after_minute: int = 480
+    ) -> Optional[int]:
+        """
+        Find the earliest free start minute for a task of given duration.
+
+        Scans the already-generated schedule for gaps, starting the search at
+        after_minute (default 08:00 = minute 480).  Returns the start minute
+        of the first gap that fits, or None if no gap exists before midnight.
+
+        Must call generate_schedule() first; returns None if schedule is empty
+        and after_minute + duration_minutes > 1440.
+
+        Example:
+            slot = scheduler.find_next_slot(30)  # next free 30-min window
+            if slot:
+                print(f"Next free slot starts at {slot // 60:02d}:{slot % 60:02d}")
+        """
+        occupied = sorted(
+            [(st.start_minute, st.end_minute) for st in self._schedule],
+            key=lambda x: x[0],
+        )
+
+        cursor = after_minute
+        for block_start, block_end in occupied:
+            if cursor + duration_minutes <= block_start:
+                return cursor          # gap before this block fits
+            cursor = max(cursor, block_end)   # jump past this block
+
+        # Check after all blocks
+        if cursor + duration_minutes <= 1440:   # 1440 = midnight
+            return cursor
+        return None
 
     def get_conflicts(self) -> list[str]:
         """Return conflict messages produced by the last generate_schedule() call."""

@@ -638,3 +638,156 @@ class TestEdgeCases:
         owner = make_owner()
         scheduler = Scheduler(owner)
         assert scheduler.detect_time_conflicts() == []
+
+
+# ---------------------------------------------------------------------------
+# Extension tests — Challenge 1: weighted scoring & next-slot finder
+# ---------------------------------------------------------------------------
+
+class TestWeightedScore:
+
+    def test_high_medication_scores_higher_than_low_walk(self):
+        """A HIGH medication must outscore a LOW walk."""
+        med  = make_task(priority=Priority.HIGH,  task_type=TaskType.MEDICATION)
+        walk = make_task(priority=Priority.LOW,   task_type=TaskType.WALK)
+        assert med.weighted_score() > walk.weighted_score()
+
+    def test_overdue_task_scores_more_than_current(self):
+        """An overdue recurring task must score higher than the same task due today."""
+        today_task    = make_task(recurring=True, due_date=date.today())
+        overdue_task  = make_task(recurring=True, due_date=date(2024, 1, 1))
+        assert overdue_task.weighted_score() > today_task.weighted_score()
+
+    def test_overdue_penalty_is_capped_at_50(self):
+        """The overdue bonus must never exceed 50 regardless of days overdue."""
+        task_1_day   = make_task(due_date=date.today() - timedelta(days=1))
+        task_100_days = make_task(due_date=date.today() - timedelta(days=100))
+        bonus_1   = task_1_day.weighted_score()   - make_task().weighted_score()
+        bonus_100 = task_100_days.weighted_score() - make_task().weighted_score()
+        assert bonus_100 <= 50
+        assert bonus_100 >= bonus_1    # more overdue = higher or equal bonus
+
+    def test_recurring_bonus_adds_5_points(self):
+        """A recurring task must score exactly 5 more than an identical non-recurring one."""
+        base      = make_task(recurring=False, due_date=date.today())
+        recurring = make_task(recurring=True,  due_date=date.today())
+        assert recurring.weighted_score() - base.weighted_score() == 5.0
+
+    def test_sort_by_weighted_priority_orders_highest_first(self):
+        """sort_by_weighted_priority must place the highest-score task first."""
+        owner = make_owner(available_minutes=120)
+        pet   = make_pet()
+        low_walk = make_task(title="Low Walk", priority=Priority.LOW, task_type=TaskType.WALK)
+        high_med = make_task(title="High Med",  priority=Priority.HIGH, task_type=TaskType.MEDICATION)
+        pet.add_task(low_walk)
+        pet.add_task(high_med)
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner)
+        pairs = [(t, pet) for t in pet.tasks]
+        ranked = scheduler.sort_by_weighted_priority(pairs)
+        assert ranked[0][0].title == "High Med"
+
+    def test_find_next_slot_returns_start_of_day_when_schedule_empty(self):
+        """With nothing scheduled, find_next_slot should return the after_minute value."""
+        owner = make_owner(available_minutes=60)
+        owner.add_pet(make_pet())
+        scheduler = Scheduler(owner)
+        scheduler.generate_schedule()           # empty schedule
+        assert scheduler.find_next_slot(30, after_minute=480) == 480
+
+    def test_find_next_slot_skips_occupied_blocks(self):
+        """find_next_slot must skip any block already in the schedule."""
+        owner = make_owner(available_minutes=60)
+        pet   = make_pet()
+        pet.add_task(make_task(title="T1", duration=30, time_of_day=TimeOfDay.MORNING))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner)
+        scheduler.generate_schedule()
+        # T1 occupies 08:00–08:30 (480–510); next 15-min slot should be at 510
+        slot = scheduler.find_next_slot(15, after_minute=480)
+        assert slot is not None
+        assert slot >= 510
+
+    def test_find_next_slot_returns_none_when_no_gap(self):
+        """find_next_slot must return None if no gap large enough exists before midnight."""
+        owner = make_owner(available_minutes=1440)
+        pet   = make_pet()
+        # One massive task that fills midnight to midnight
+        pet.add_task(make_task(duration=1440, time_of_day=TimeOfDay.MORNING))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner)
+        scheduler.generate_schedule()
+        # After a 1440-min block starting at 480, the cursor is at 1920 > 1440
+        assert scheduler.find_next_slot(10, after_minute=480) is None
+
+
+# ---------------------------------------------------------------------------
+# Extension tests — Challenge 2: JSON serialization round-trip
+# ---------------------------------------------------------------------------
+
+class TestJsonPersistence:
+
+    def _make_full_owner(self) -> Owner:
+        owner = make_owner(name="TestOwner", available_minutes=120)
+        pet   = make_pet(name="Buddy")
+        pet.add_task(make_task(
+            title="Daily Walk", duration=30, priority=Priority.HIGH,
+            task_type=TaskType.WALK, time_of_day=TimeOfDay.MORNING,
+            scheduled_time="08:00", recurring=True, due_date=date(2026, 4, 5),
+        ))
+        pet.add_task(make_task(title="Feed", duration=10, priority=Priority.MEDIUM))
+        owner.add_pet(pet)
+        return owner
+
+    def test_task_to_dict_round_trip(self):
+        """Task.from_dict(task.to_dict()) must produce an equal Task."""
+        task = make_task(
+            title="Meds", duration=5, priority=Priority.HIGH,
+            task_type=TaskType.MEDICATION, scheduled_time="08:30",
+            recurring=True, due_date=date(2026, 4, 5),
+        )
+        restored = Task.from_dict(task.to_dict())
+        assert restored.title           == task.title
+        assert restored.duration_minutes == task.duration_minutes
+        assert restored.priority        == task.priority
+        assert restored.task_type       == task.task_type
+        assert restored.scheduled_time  == task.scheduled_time
+        assert restored.recurring       == task.recurring
+        assert restored.due_date        == task.due_date
+
+    def test_pet_to_dict_round_trip(self):
+        """Pet.from_dict(pet.to_dict()) must preserve all tasks."""
+        pet = make_pet(name="Luna")
+        pet.add_task(make_task(title="T1"))
+        pet.add_task(make_task(title="T2"))
+        restored = Pet.from_dict(pet.to_dict())
+        assert restored.name == "Luna"
+        assert len(restored.tasks) == 2
+        assert [t.title for t in restored.tasks] == ["T1", "T2"]
+
+    def test_owner_to_dict_round_trip(self):
+        """Owner.from_dict(owner.to_dict()) must preserve name, budget, and all pets/tasks."""
+        owner = self._make_full_owner()
+        restored = Owner.from_dict(owner.to_dict())
+        assert restored.name == owner.name
+        assert restored.available_minutes_per_day == owner.available_minutes_per_day
+        assert len(restored.pets) == len(owner.pets)
+        assert restored.pets[0].name == "Buddy"
+        assert len(restored.pets[0].tasks) == 2
+
+    def test_save_and_load_json(self, tmp_path):
+        """save_to_json then load_from_json must produce an identical owner graph."""
+        owner = self._make_full_owner()
+        path  = tmp_path / "test_data.json"
+        owner.save_to_json(path)
+        loaded = Owner.load_from_json(path)
+        assert loaded.name == owner.name
+        assert len(loaded.pets) == len(owner.pets)
+        original_titles = [t.title for p in owner.pets for t in p.tasks]
+        loaded_titles   = [t.title for p in loaded.pets  for t in p.tasks]
+        assert original_titles == loaded_titles
+
+    def test_load_from_json_raises_for_missing_file(self, tmp_path):
+        """load_from_json must raise FileNotFoundError for a non-existent file."""
+        with pytest.raises(FileNotFoundError):
+            Owner.load_from_json(tmp_path / "nonexistent.json")
